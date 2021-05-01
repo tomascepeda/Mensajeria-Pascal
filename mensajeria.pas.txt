@@ -1,0 +1,1131 @@
+program mensajeriaPersonal;
+
+Uses sysutils, crt;
+
+type puntArb=^arbUsuarios;
+    arbUsuarios=record
+    nombre:string[8];
+    pass:string[8];
+    sig, ant:puntArb;
+end;
+
+    conversacionesArchivo = record
+    codigo : integer;
+    usuario1,usuario2 : string;
+    end;
+
+type puntConv=^listaConvers;
+    puntMens=^listaMensajes;
+    listaConvers=record
+    codigo:integer;
+    usuario1, usuario2:puntArb;
+    mensaje:puntMens;
+    sig:puntConv;
+end;
+
+    listaMensajes=record
+    fecha:string;
+    texto:string;
+    usuario1:puntArb;
+    leido:boolean;
+    sig : puntMens;
+end;
+
+    mensajes=record
+    codigo : integer;
+    fecha:string;
+    texto:string;
+    usuario1:string;
+    leido:boolean;
+end;
+
+type puntHiper=^hiperConectados;
+    hiperConectados=record
+    nombre:string;
+    cantConv:integer;
+    sig:puntHiper;
+end;
+
+type archUsuarios=file of arbUsuarios;
+     archConvers = file of conversacionesArchivo;
+     archMensajes = file of mensajes;
+     
+procedure abrirArchivos(var ArchMensajes : archMensajes; var ArchConversaciones : archConvers; var ArchUsuarios : archUsuarios);
+begin
+    assign(ArchMensajes, '/ip2/TarrascepeMensajes.dat');
+    assign(ArchConversaciones, '/ip2/TarrascepeConversacioness.dat');
+    assign(ArchUsuarios, '/ip2/TarrascepeUsuarios.dat');
+    {$I-}
+    reset(ArchMensajes);
+    {$I+}
+    if (ioresult <> 0) then begin
+        rewrite(ArchMensajes);
+    end;
+    {$I-}
+    reset(ArchConversaciones);
+    {$I+}
+    if (ioresult <> 0) then begin
+        rewrite(ArchConversaciones);
+    end;
+    {$I-}
+    reset(ArchUsuarios);
+    {$I+}
+    if (ioresult <> 0) then begin
+        rewrite(ArchUsuarios);
+    end;
+end;
+
+procedure agregarenArbol(var ArbUsuarios : puntArb;registro : arbUsuarios);
+begin
+    if (ArbUsuarios = nil) then begin
+        new(ArbUsuarios);
+        ArbUsuarios^ := registro;
+    end else begin
+        if (ArbUsuarios^.nombre < registro.nombre) then
+            agregarenArbol(ArbUsuarios^.sig,registro)
+        else
+            agregarenArbol(ArbUsuarios^.ant,registro);
+    end;
+end;
+
+//crea el arbol con los usuarios que hay en el archivo usuarios
+procedure cargaArbol(var ArchUsuarios : archUsuarios;var ArbUsuarios : puntArb);
+var registro : arbUsuarios;
+begin
+    seek(ArchUsuarios,0);
+    while (not(eof(ArchUsuarios))) do begin
+        read(ArchUsuarios,registro);
+        agregarenArbol(ArbUsuarios,registro);
+    end;
+end;    
+     
+//une el puntero del usuario que escribio el mensaje al arbol
+procedure unirAlArbol(ArbUsuarios : puntArb; nombre : string; var mensaje : listaMensajes);
+begin
+    if (mensaje.usuario1 = nil) then begin
+        if (ArbUsuarios <> nil) then begin
+            if (ArbUsuarios^.nombre = nombre) then begin
+                mensaje.usuario1 := ArbUsuarios;
+            end;
+            unirAlArbol(ArbUsuarios^.ant,nombre,mensaje);
+            unirAlArbol(ArbUsuarios^.sig,nombre,mensaje);
+        end;
+    end;
+end;
+
+//agrega un mensaje a la lista manteniendo el orden
+procedure agregarAListaMensajes(var lista_mensajes : puntMens; registro : mensajes; ArbUsuarios : puntArb);
+var cursor : puntMens;
+begin
+    if (lista_mensajes <> nil) then begin
+        if (lista_mensajes^.fecha > registro.fecha) then begin
+            agregarAListaMensajes(lista_mensajes^.sig, registro, ArbUsuarios);
+        end else begin
+            new(cursor);
+            cursor^.fecha := registro.fecha;
+            cursor^.texto := registro.texto;
+            cursor^.leido := registro.leido;
+            unirAlArbol(ArbUsuarios, registro.usuario1, cursor^); //une el usuario que escribio el mensaje al arbol
+            cursor^.sig := lista_mensajes;
+            lista_mensajes := cursor;
+        end;
+    end else begin
+        new(lista_mensajes);
+        lista_mensajes^.fecha := registro.fecha;
+        lista_mensajes^.texto := registro.texto;
+        lista_mensajes^.leido := registro.leido;
+        unirAlArbol(ArbUsuarios, registro.usuario1, lista_mensajes^);
+        lista_mensajes^.sig := nil;
+    end;
+end;
+
+//Genera mensajes de una conversacion
+procedure generarListaMensajes(codigo : integer; var lista_mensajes : puntMens; var ArchMensajes : archMensajes; ArbUsuarios : puntArb);
+var aux_archivo : mensajes;
+begin
+    if (not eof(ArchMensajes)) then begin
+        read(ArchMensajes,aux_archivo);
+        if (aux_archivo.codigo = codigo) then begin 
+            agregarAListaMensajes(lista_mensajes, aux_archivo, ArbUsuarios);
+            generarListaMensajes(codigo,lista_mensajes^.sig,ArchMensajes,ArbUsuarios);/////////////^.sig
+        end else begin
+            generarListaMensajes(codigo,lista_mensajes,ArchMensajes,ArbUsuarios);
+        end;
+    end;
+end;
+
+//une los punteros de los usuarios de la lista conversaciones con el arbol
+procedure unirArbol(ArbUsuarios : puntArb; var reg_conversaciones : listaConvers; aux_archivo : conversacionesArchivo);
+begin
+    if ( (reg_conversaciones.usuario1 = nil) or (reg_conversaciones.usuario2 = nil) ) then begin
+        if (ArbUsuarios <> nil) then begin
+            if (ArbUsuarios^.nombre = aux_archivo.usuario1) then
+                reg_conversaciones.usuario1 := ArbUsuarios;
+            if (ArbUsuarios^.nombre = aux_archivo.usuario2) then
+                reg_conversaciones.usuario2 := ArbUsuarios;
+            unirArbol(ArbUsuarios^.ant,reg_conversaciones,aux_archivo);
+            unirArbol(ArbUsuarios^.sig,reg_conversaciones,aux_archivo);
+        end;
+    end;
+end;
+
+//Crea la lista conversaciones y los mensajes
+procedure crearListaConversaciones(var listaConversaciones : puntConv; ArbUsuarios : puntArb; var ArchConversaciones : archConvers; var ArchMensajes : archMensajes);
+var reg_archivo : conversacionesArchivo;
+begin
+    if (not eof(ArchConversaciones)) then begin
+        read(ArchConversaciones,reg_archivo);
+        new(listaConversaciones);
+        listaConversaciones^.codigo := reg_archivo.codigo;
+        listaConversaciones^.usuario1 := nil;
+        listaConversaciones^.usuario2 := nil;
+        listaConversaciones^.mensaje := nil;
+        unirArbol(ArbUsuarios, listaConversaciones^,reg_archivo); //une los usuarios del nodo al arbol
+        seek(ArchMensajes,0);
+        generarListaMensajes(listaConversaciones^.codigo, listaConversaciones^.mensaje, ArchMensajes, ArbUsuarios); //genera los mensajes de la conversacion
+        crearListaConversaciones(listaConversaciones^.sig, ArbUsuarios, ArchConversaciones,ArchMensajes);
+    end;
+end;
+     
+function validarUsuCont(nombre,password : string; ArbUsuarios : puntArb) : boolean;
+var esta : boolean;
+begin
+    esta := false;
+    if (ArbUsuarios <> nil) then begin
+        if (nombre = ArbUsuarios^.nombre) then
+            if (password = ArbUsuarios^.pass) then
+                esta := true;
+    if (esta = false) then 
+        esta := validarUsuCont(nombre, password, ArbUsuarios^.ant);
+    if (esta = false) then
+        esta := validarUsuCont(nombre, password, ArbUsuarios^.sig);
+end;
+    validarUsuCont := esta;
+end;
+     
+function estaenArbol(arbol :puntArb; nombre :string) : boolean;
+var esta : boolean;
+begin
+    esta := false;
+    if (arbol <> nil) then begin
+        if (nombre = arbol^.nombre) then
+            esta := true;
+        if (esta = false) then 
+            esta := estaenArbol(arbol^.ant,nombre);
+        if (esta = false) then
+            esta := estaenArbol(arbol^.sig,nombre);
+    end;
+    estaenArbol := esta;
+end;
+
+procedure nuevoUsuario(var arbol : puntArb);
+var nombre, pass : string[8]; registro : arbUsuarios;
+begin
+    clrscr();
+    writeln('Nuevo Usuario');
+    writeln();
+    writeln('Para crear un nombre de usuario, ingrese un nombre (hasta 8 letras)');
+    writeln();
+    write('nombre: ');
+    readln(nombre);
+    if (nombre <> '') then begin
+        clrscr();
+        writeln('Bien ' , nombre, ', ahora ingrese una contraseña (hasta 8 caracteres)');
+        writeln();
+        write('contraseña: ');
+        readln(pass);
+        if (pass <> '') then begin
+            clrscr();
+            if not (estaenArbol(arbol, nombre)) then begin
+                registro.nombre := nombre;
+                registro.pass := pass;
+                registro.sig := nil;
+                registro.ant := nil;
+                agregarenArbol(arbol,registro);
+            end else begin
+                clrscr();
+                writeln('El nombre de usuario ya esta en uso.');
+                readln();
+            end;
+        end else begin
+            clrscr();
+            writeln('La contraseña no es valida.');
+            readln();
+        end;
+    end else begin
+        clrscr();
+        writeln('El Usuario no es valido.');
+        readln();
+    end;
+end; 
+
+//Busca el nombre en la lista, si esta le suma 1 a cantConv y sino lo agrega a la lista
+procedure sumarLista(var lista : puntHiper; nombre : string);
+begin 
+    if (lista <> nil) then begin
+        if (lista^.nombre = nombre) then
+            lista^.cantConv := lista^.cantConv + 1
+        else
+            sumarLista(lista^.sig, nombre);
+    end else begin
+        new(lista);
+        lista^.nombre := nombre;
+        lista^.cantConv := 1;
+    end;
+end;
+
+//Busca la mayor conversacion de una lista y devuelve las cantidad de conversaciones y el nombre
+function buscarConver(lista : puntHiper; numero : integer) : hiperConectados;
+var aux : hiperConectados; conv_alta : integer; cursor : puntHiper;
+begin
+    conv_alta := -1;
+    cursor := lista^.sig;
+    while (cursor <> nil) do begin
+        if (cursor^.cantConv <= numero) then begin
+            cursor := cursor^.sig;
+        end else begin
+            if (conv_alta < cursor^.cantConv) then begin
+                conv_alta := cursor^.cantConv;
+                aux.nombre := cursor^.nombre;
+            end else begin
+                cursor := cursor^.sig;
+            end;
+        end;
+    end;
+    aux.cantConv := conv_alta;
+    buscarConver:= aux;
+end;
+
+{agrega un registro a la lista manteniendo el orden}
+procedure agregarenLista(var lista : puntHiper;registro : hiperConectados);
+var cursor : puntHiper;
+begin
+    if (lista <> nil) then begin
+        if (lista^.cantConv > registro.cantConv) then begin
+            agregarenLista(lista^.sig,registro)
+        end else begin
+            new(cursor);
+            cursor^ := registro;
+            cursor^.sig := lista;
+            lista := cursor;
+        end;
+    end else begin
+        new(lista);
+        lista^ := registro;
+        lista^.sig := nil;
+    end;
+end;
+
+//elimina el nodo repetido
+procedure eliminarRepetido(var lista : puntHiper;registro : hiperConectados);
+var cursor : puntHiper;
+begin
+    if (lista <> nil) then begin
+        cursor := lista^.sig;
+        if ((cursor^.cantConv = registro.cantConv) and (cursor^.nombre = registro.nombre)) then begin
+            lista^.sig := cursor^.sig;
+            dispose(cursor);
+        end else begin
+            eliminarRepetido(lista^.sig,registro);
+        end;
+    end;
+end;
+
+//crea la lista hiperconectados sin mostrarla
+procedure usuariosHC(lista_conv : puntConv; var lista_HC : puntHiper);
+var cursor_conv : puntConv; cursor_HC : puntHiper; registro : hiperConectados;
+begin
+    cursor_conv := lista_conv;
+    while (cursor_conv <> nil) do begin
+        sumarLista(lista_HC,cursor_conv^.usuario1^.nombre);
+        sumarLista(lista_HC,cursor_conv^.usuario2^.nombre);
+        cursor_conv := cursor_conv^.sig;
+    end;
+    cursor_HC := lista_HC;
+    while (cursor_HC <> nil) do begin
+        registro := buscarConver(cursor_HC,cursor_HC^.cantConv);
+        if (registro.cantConv <> -1) then begin
+            agregarenLista(lista_HC,registro);
+            eliminarRepetido(cursor_HC,registro);
+        end;
+        cursor_HC := cursor_HC^.sig;
+    end;
+end;
+
+procedure mostrarListaHC(lista_HC : puntHiper);
+var cursor : puntHiper; sin_usuarios : boolean;
+begin
+    sin_usuarios := false;
+    cursor := lista_HC;
+    if (cursor = nil) then begin
+        writeln('No hay usuarios.');
+        sin_usuarios := true;
+    end;
+    if (sin_usuarios = false) then
+        writeln('Los usuarios hiperconectados son los siguientes:');
+    while (cursor <> nil) do begin
+        writeln();
+        write('Usuario: ', cursor^.nombre);
+        writeln();
+        writeln('Cantidad de conversaciones: ', cursor^.cantConv);
+        cursor := cursor^.sig;
+    end;
+end;
+
+procedure guardarArbol(var archUsuarios : archUsuarios;arbUsuarios : puntArb);
+var aux : arbUsuarios;
+begin
+    if (arbUsuarios <> nil) then begin
+        aux := arbUsuarios^;
+        aux.sig := nil;
+        aux.ant := nil;
+        write(archUsuarios,aux);
+        guardarArbol(archUsuarios,arbUsuarios^.ant);
+        guardarArbol(archUsuarios,arbUsuarios^.sig);
+    end;
+end;
+
+procedure guardarConversaciones(var archConversaciones : archConvers; listaConvers : puntConv);
+var aux : conversacionesArchivo;
+begin
+    if (listaConvers <> nil) then begin
+        aux.codigo := listaConvers^.codigo;
+        aux.usuario1 := listaConvers^.usuario1^.nombre;
+        aux.usuario2 := listaConvers^.usuario2^.nombre;
+        write(archConversaciones,aux);
+        guardarConversaciones(archConversaciones,listaConvers^.sig);
+    end;
+end;
+
+procedure guardarMensajes(var archMensajes : archMensajes; listaMensajes : puntMens; codigo : integer);
+var aux : mensajes;
+begin
+    if (listaMensajes <> nil) then begin
+        aux.usuario1 := listaMensajes^.usuario1^.nombre;
+        aux.fecha := listaMensajes^.fecha;
+        aux.leido := listaMensajes^.leido;
+        aux.texto := listaMensajes^.texto;
+        aux.codigo := codigo;
+        write(archMensajes,aux);
+        guardarMensajes(archMensajes,listaMensajes^.sig, codigo);
+    end;
+end;
+
+//Guarda conversaciones mensajes y el arbol
+procedure salir(var archMensajes : archMensajes; var archConversaciones : archConvers; var archUsuarios : archUsuarios; arbUsuarios : puntArb;listaConvers : puntConv);
+var cursor : puntConv;
+begin
+    rewrite(archMensajes);
+    rewrite(archConversaciones);
+    rewrite(archUsuarios);
+    guardarArbol(archUsuarios,arbUsuarios);
+    guardarConversaciones(archConversaciones,listaConvers);
+    cursor := listaConvers;
+    while (cursor <> nil) do begin
+        guardarMensajes(archMensajes,cursor^.mensaje, cursor^.codigo);
+        cursor := cursor^.sig;
+    end;
+    close(archMensajes);
+    close(archConversaciones);
+    close(archUsuarios);
+end;
+
+function noleidos(listaConversaciones : puntConv ; nombre:string) : integer;
+var cursor_mensajes:puntMens; cursor_conversaciones : puntConv;
+    cca:integer;
+begin
+    cca:=0;
+    cursor_conversaciones := listaConversaciones;
+    while (cursor_conversaciones <> nil) do begin
+        if ( (cursor_conversaciones^.usuario1^.nombre = nombre) or (cursor_conversaciones^.usuario2^.nombre = nombre) ) then begin
+            cursor_mensajes := cursor_conversaciones^.mensaje;
+                while (cursor_mensajes <> nil) do begin
+                    if ( (cursor_mensajes^.usuario1^.nombre <> nombre) and (cursor_mensajes^.leido = false) ) then
+                        cca := cca + 1;
+                    cursor_mensajes := cursor_mensajes^.sig;
+                end;
+        end;
+        cursor_conversaciones := cursor_conversaciones^.sig;
+    end;
+    
+    noleidos:=cca;
+end;
+
+procedure listarCA(ListConvers : puntConv; nombre : string);
+var cursor_con : puntConv; cursor_men : puntMens; contador : integer; encontro : boolean; otro_usuario : string;
+begin
+    clrscr();
+    writeln('Listar conversaciones activas');
+    writeln();
+    if (ListConvers <> nil) then begin
+        cursor_con := ListConvers;
+        writeln('sus conversaciones activas son las siguientes:');
+        writeln();
+        while (cursor_con <> nil) do begin
+            encontro := false;
+            contador := 0;
+            if (cursor_con^.usuario1^.nombre = nombre) then begin
+                encontro := true;
+                otro_usuario := cursor_con^.usuario2^.nombre;
+            end;
+            if (cursor_con^.usuario2^.nombre = nombre) then begin
+                encontro := true;
+                otro_usuario := cursor_con^.usuario1^.nombre;
+            end;
+            if encontro then begin
+                cursor_men := cursor_con^.mensaje;
+                while ( (cursor_men <> nil) and encontro ) do begin
+                    if (cursor_men^.leido = false) and (cursor_men^.usuario1^.nombre = otro_usuario) then begin
+                        contador := contador + 1;
+                        cursor_men := cursor_men^.sig;
+                    end else begin
+                        encontro := false;
+                    end;
+                end;
+                encontro := true;
+            end;
+            if encontro then begin
+                writeln('con: ', otro_usuario);
+                writeln('codigo de conversacion: ', cursor_con^.codigo);
+                writeln('cantidad de mensajes no leidos: ', contador);
+                writeln();
+            end;
+            cursor_con := cursor_con^.sig;
+        end;
+    end else begin
+        writeln('No hay conversaciones.');
+    end;
+    readln();
+end;
+
+//Verifica que el usuario tenga alguna conversacion
+function tieneConversacion(lista_conversaciones : puntConv; nombre : string) : boolean;
+var cursor : puntConv; tiene : boolean;
+begin
+    tiene := false;
+    cursor := lista_conversaciones;
+    
+    while (cursor <> nil) and (not tiene) do begin
+        if ( (cursor^.usuario1^.nombre = nombre) or (cursor^.usuario2^.nombre = nombre) ) then
+            tiene := true;
+        cursor := cursor^.sig;
+    end;
+    
+    tieneConversacion := tiene;
+end;
+    
+procedure listarCT(ListaConversaciones:puntConv; nombre:string);
+var cursor:puntconv;
+    otrousuario:string[8];
+    conv:boolean;
+begin
+    conv:=false;
+    clrscr();
+    writeln('Listar todas las conversaciones');
+    cursor:=listaConversaciones;
+    writeln();
+    writeln('sus conversaciones son las siguientes:');
+    while (cursor<>nil) do begin
+        if ((cursor^.usuario1^.nombre=nombre) or (cursor^.usuario2^.nombre=nombre)) then begin
+            conv:=true;
+            if (cursor^.usuario1^.nombre=nombre) then
+                otrousuario:=cursor^.usuario2^.nombre
+            end else
+                otrousuario:=cursor^.usuario1^.nombre;
+        writeln();
+        write('con: ');
+        writeln(otrousuario);
+        write('codigo de conversacion: ');
+        writeln(cursor^.codigo);
+        cursor:=cursor^.sig;
+    end;
+    if (conv=false) then begin
+        writeln();
+        writeln('No hay conversaciones.');
+    end;
+    readln();
+end;
+
+//posiciona el cursor en los mensajes no leidos
+procedure posicionarNL(var cursor : puntMens);
+begin
+    if (cursor <> nil) then
+        if cursor^.leido then begin
+            cursor := cursor^.sig;
+            posicionarNL(cursor);
+        end;
+end;
+
+procedure verultmjs(lista_mensajes : puntMens);
+var cursor : puntMens; contador : integer;
+begin
+    cursor := lista_mensajes;
+    contador := 0;
+    clrscr();
+    posicionarNL(cursor);
+    if (lista_mensajes <> nil) then begin
+        if (cursor = nil) then //no hay mensajes no leidos
+            cursor := lista_mensajes;
+        while ( (cursor <> nil) and (contador < 11) ) do begin
+            if (not cursor^.leido) then begin
+                writeln('<',cursor^.fecha, '> <', cursor^.usuario1^.nombre, '> ', cursor^.texto, ' <no leido>');
+                cursor^.leido := true;
+            end else begin
+                writeln('<',cursor^.fecha, '> <', cursor^.usuario1^.nombre, '> ', cursor^.texto, ' <leido>');
+            end;
+            writeln();
+            cursor := cursor^.sig;
+            contador := contador + 1;
+        end;
+    end else begin
+        writeln('No hay mensajes.');
+    end;
+    readln();
+end;   
+    
+procedure verultmjs(ListaConversaciones : puntConv; nombre:string);
+var codigo : integer; encontro : boolean;
+begin
+    clrscr();
+    writeln('Ver ultimos mensajes');
+    writeln();
+    if tieneConversacion(ListaConversaciones, nombre) then begin
+        write('Ingrese el codigo de conversacion: ');
+        readln(codigo);
+        clrscr();
+        encontro := false;
+        while ( (ListaConversaciones <> nil) and (not encontro) ) do begin
+            if (ListaConversaciones^.codigo = codigo) then begin
+                encontro := true;
+                if ( (ListaConversaciones^.usuario1^.nombre = nombre) or  (ListaConversaciones^.usuario2^.nombre = nombre) ) then begin
+                    verultmjs(ListaConversaciones^.mensaje);
+                end else begin
+                    writeln('Codigo de conversacion incorrecto.');
+                    readln();
+                end;
+            end;    
+            ListaConversaciones := ListaConversaciones^.sig;
+        end;
+        if (ListaConversaciones = nil) and (not encontro) then begin
+            writeln('Codigo incorrecto.');
+            readln();
+        end;
+    end else begin
+        writeln('No hay mensajes.');
+    end;
+    readln();
+end;
+
+procedure mostrarConversacion(lista_mensajes:puntMens; nombre:string);
+var cursor:puntMens;
+begin
+    cursor:=lista_mensajes;
+    while (cursor<>nil) do begin
+        if (not cursor^.leido) then begin
+            writeln('<',cursor^.fecha, '> <', cursor^.usuario1^.nombre, '> ', cursor^.texto, ' no leido.');
+            cursor^.leido:=true;
+        end else begin
+            writeln('<',cursor^.fecha, '> <', cursor^.usuario1^.nombre, '> ', cursor^.texto, ' leido.');
+        end;
+        writeln();
+        if (nombre <> cursor^.usuario1^.nombre) then
+            cursor^.leido := true;
+        cursor := cursor^.sig;
+    end;
+end;
+        
+procedure verconversacion(ListaConversaciones : puntConv; nombre:string);
+var cursor : puntConv;codigo : integer; encontro : boolean;
+begin
+    encontro := false;
+    clrscr();
+    writeln('Ver conversacion');
+    writeln();
+    if tieneConversacion(ListaConversaciones, nombre) then begin
+        write('Ingrese el codigo de conversacion: ');
+        readln(codigo);
+        writeln();
+        cursor := ListaConversaciones;
+        while ( (cursor <> nil) and (not encontro) ) do begin
+            if (cursor^.codigo = codigo) and ( (cursor^.usuario1^.nombre = nombre) or (cursor^.usuario2^.nombre = nombre) ) then begin
+                if (cursor^.mensaje <> nil) then begin
+                    writeln('Sus mensajes son los siguientes:');
+                    writeln();
+                    mostrarConversacion(cursor^.mensaje,nombre);
+                    encontro := true;
+                end else begin
+                    writeln('No hay mensajes.');
+                end;
+            end;
+            cursor := cursor^.sig;
+        end;
+    end else begin
+        writeln('No hay conversaciones.');
+    end;
+    readln();
+end;      
+  
+procedure mandarMensaje(var lista_mensajes : puntMens; arbol:puntArb; nombre:string);
+var cursor :puntMens; mensaje : string[200];
+begin
+    write('Ingrese el mensaje: ');
+    readln(mensaje);
+    clrscr();
+    if (mensaje <> '') then begin
+        cursor := lista_mensajes;
+        if (cursor = nil) then begin
+            new(lista_mensajes);
+            lista_mensajes^.fecha := DateTimeToStr(Now);
+            lista_mensajes^.texto := mensaje;
+            lista_mensajes^.leido := false;
+            lista_mensajes^.usuario1 := nil;
+            unirAlArbol(arbol,nombre,lista_mensajes^);
+            lista_mensajes^.sig := nil;
+        end else begin
+            new(lista_mensajes);
+            lista_mensajes^.fecha := DateTimeToStr(Now);
+            lista_mensajes^.texto := mensaje;
+            lista_mensajes^.usuario1 := nil;
+            unirAlArbol(arbol,nombre,lista_mensajes^);
+            lista_mensajes^.leido := false;
+            lista_mensajes^.sig := cursor;
+        end;
+        writeln('Mensaje enviado.');
+    end else begin
+        writeln('El mensaje no es valido.');
+    end;
+end;
+        
+procedure contestarMensaje(ListaConversaciones : puntConv; nombre:string; arbol:puntArb);
+var cursor : puntConv; 
+    encontro :boolean;
+    codigo:integer;
+begin
+    clrscr();
+    writeln('Contestar mensaje');
+    writeln();
+    if tieneConversacion(ListaConversaciones, nombre) then begin
+        write('Ingrese el codigo de conversacion: ');
+        readln(codigo);
+        clrscr();
+        cursor:=ListaConversaciones;
+        encontro := false;
+        while (cursor<>nil) and (not encontro) do begin
+            if (cursor^.codigo=codigo) then begin
+                encontro := true;
+                if ( (nombre = cursor^.usuario1^.nombre) or (nombre = cursor^.usuario2^.nombre) ) then
+                    mandarMensaje(cursor^.mensaje,arbol,nombre)
+                end else begin
+                    writeln('El codigo no es valido.');
+            end;
+            cursor := cursor^.sig;
+        end;
+    end else begin
+        writeln('No existen conversaciones.');
+    end;
+    readln();
+end;
+
+function estaenListaconvers(ListaConversaciones : puntConv; destinatario:string) : boolean;
+var esta : boolean;
+begin 
+    esta := false;
+    if (listaconversaciones <> nil) then
+        if (listaconversaciones^.usuario2^.nombre <> destinatario) then
+            esta := estaenListaconvers(listaconversaciones^.sig, destinatario)
+        else
+            if (listaconversaciones^.usuario2^.nombre = destinatario) then
+                esta := true;
+    estaenListaconvers := esta;
+end;
+
+procedure nuevaConversacion(var ListaConversaciones : puntConv; nombre:string ;arbol:puntArb);
+var cursor : puntConv; creada,error,salir : boolean; aux : conversacionesArchivo; destinatario:string[8];
+begin
+    cursor := ListaConversaciones;
+    creada := false;
+    salir := false;
+    error := false;
+    clrscr();
+    writeln('Nueva conversacion');
+    writeln();
+    write('Ingrese el destinatario: ');
+    readln(destinatario);
+    clrscr();
+    if (nombre<>destinatario) then begin
+        if (estaenArbol(arbol,destinatario)=true) then begin
+            if (ListaConversaciones=nil) then begin//Primer conversacion de la lista
+                new(ListaConversaciones);
+                ListaConversaciones^.codigo := 1;
+                aux.usuario1:=nombre;
+                aux.usuario2:=destinatario;
+                unirArbol(arbol,ListaConversaciones^, aux);
+                creada:=true;
+                salir:=true;
+                writeln('Se creo la conversacion con ', destinatario,' el codigo es: 1');
+            end;
+            
+            while ((not salir) and (cursor <> nil)) do begin //si ya tiene conversaciones
+                
+                if ((cursor^.usuario1^.nombre = nombre) or (cursor^.usuario2^.nombre = nombre)) then begin
+                    if ((cursor^.usuario1^.nombre = destinatario) or (cursor^.usuario2^.nombre = destinatario)) then begin
+                        clrscr();
+                        writeln('Ya existe una conversacion con ', destinatario, ', el codigo es: ', cursor^.codigo,'.');
+                        error:=true;
+                        salir:=true;
+                    end;
+                end;
+                if (cursor^.sig=nil) then
+                    salir:=true
+                else
+                    cursor:=cursor^.sig;
+            end;
+            if ((not creada) and (not error)) then begin
+                new(cursor^.sig);
+                cursor^.sig^.codigo:=cursor^.codigo + 1;
+                aux.usuario1:=nombre;
+                aux.usuario2:=destinatario;
+                unirArbol(arbol,cursor^.sig^, aux);
+                writeln('Se creo la conversacion con ', destinatario, ' el codigo es: ', cursor^.sig^.codigo);
+            end;
+        end else begin
+            writeln('El usuario no existe');
+        end;
+    end else begin
+        writeln('No es posible crear una conversacion con usted mismo.');
+    end;
+    readln();
+end;
+     
+procedure borrarMensajes(var lista_mensajes:puntMens);
+begin
+    while (lista_mensajes<>nil) do begin
+        if (lista_mensajes^.sig=nil) then begin
+            dispose(lista_mensajes);
+            lista_mensajes:=nil;
+        end else begin
+            borrarMensajes(lista_mensajes^.sig);
+        end;
+    end;
+end;
+
+procedure eliminarNodoLista(var listaConvers:puntConv);
+var eliminar:puntConv;
+begin
+    if (listaConvers <> nil) then begin
+        eliminar:=listaConvers;
+        listaConvers:=listaConvers^.sig;
+        eliminar^.usuario1:=nil;
+        eliminar^.usuario2:=nil;
+        eliminar^.mensaje:=nil;
+        dispose(eliminar);
+        eliminar:=nil;
+    end;
+end;
+
+//Busca el el mayor usuario entre los menores, se le pasa como parametro el puntero anterior y un registro vacio
+function buscarMayorArbol(ArbUsuarios : puntArb; registro : arbUsuarios) : arbUsuarios;
+var aux,izquierda,derecha : arbUsuarios;
+begin
+    izquierda.nombre := '';
+    derecha.nombre := '';
+    if (ArbUsuarios <> nil) then begin
+        if (ArbUsuarios^.nombre < registro.nombre) then begin
+            izquierda := buscarMayorArbol(ArbUsuarios^.ant, registro);
+            derecha := buscarMayorArbol(ArbUsuarios^.sig,registro);
+        end else begin
+            aux.nombre := ArbUsuarios^.nombre;
+            aux.pass := ArbUsuarios^.pass;
+            izquierda := buscarMayorArbol(ArbUsuarios^.ant, aux);
+            derecha := buscarMayorArbol(ArbUsuarios^.sig, aux);
+        end;
+        if (izquierda.nombre > derecha.nombre) then
+            buscarMayorArbol := izquierda
+        else
+            buscarMayorArbol := derecha;
+    end else begin
+        buscarMayorArbol := registro;
+    end;
+end;
+
+procedure puentearArbol(var ArbUsuarios : puntArb; registro : arbUsuarios);
+var eliminar : puntArb; encontro : boolean;
+begin
+    if (ArbUsuarios <> nil) then begin
+        encontro := false;
+        if (ArbUsuarios^.nombre = registro.nombre) then begin
+            encontro := true;
+            if (ArbUsuarios^.ant = nil) and (ArbUsuarios^.sig = nil)then begin //si es hoja que lo elimine directamente
+                dispose(ArbUsuarios);
+                ArbUsuarios := nil;
+            end else begin //si no es hoja, mayores no tiene, por lo que se apunta a menores
+                eliminar := ArbUsuarios;
+                ArbUsuarios := ArbUsuarios^.ant;
+                dispose(eliminar);
+                eliminar := nil;
+            end;
+        end;
+        if (encontro = false) then begin
+            puentearArbol(ArbUsuarios^.ant,registro);
+            puentearArbol(ArbUsuarios^.sig,registro);
+        end;
+    end;
+end;
+
+procedure reConectarMensajes(ArbUsuarios : puntArb; lista_mensajes : puntMens);
+var cursor : puntMens;
+begin
+    cursor := lista_mensajes;
+    while (cursor <> nil) do begin
+        if (cursor^.usuario1^.nombre = ArbUsuarios^.nombre) then begin
+            cursor^.usuario1 := ArbUsuarios;
+        end;
+        cursor := cursor^.sig;
+    end;
+end;
+
+//Conecta el usuario del arbol a la lista
+procedure reConectarUsrEnLista(ArbUsuarios : puntArb; listaConvers: puntConv);
+var cursor : puntConv;
+begin
+    cursor := listaConvers;
+    while (cursor <> nil) do begin
+        if (cursor^.usuario1^.nombre = ArbUsuarios^.nombre) then begin
+            cursor^.usuario1 := ArbUsuarios;
+        end else begin
+            if (cursor^.usuario2^.nombre = ArbUsuarios^.nombre) then
+                cursor^.usuario2 := ArbUsuarios;
+        end;
+        reConectarMensajes(ArbUsuarios, cursor^.mensaje);
+        cursor := cursor^.sig;
+    end;
+end;
+
+procedure eliminarDelArbol(var ArbUsuarios : puntArb; nombre : string; var listaConvers : puntConv);
+var mayor,aux : arbUsuarios; encontro : boolean; eliminar : puntArb;
+begin
+    encontro := false;
+    if (ArbUsuarios <> nil) then begin
+        if (nombre = ArbUsuarios^.nombre) then begin
+            encontro := true;
+            if ( (ArbUsuarios^.ant <> nil) and (ArbUsuarios^.sig <> nil) ) then begin //si el nodo tiene usuarios por izquirda y por derecha que busque el mayor de los menores
+                aux.nombre := '';
+                aux.pass := '';
+                mayor := buscarMayorArbol(ArbUsuarios^.ant,aux);
+                ArbUsuarios^.nombre := mayor.nombre;
+                ArbUsuarios^.pass := mayor.pass;
+                reConectarUsrEnLista(ArbUsuarios, listaConvers); 
+                puentearArbol(ArbUsuarios^.ant, mayor);
+            end else begin
+                if ( (ArbUsuarios^.ant = nil) and (ArbUsuarios^.sig = nil) ) then begin //si el nodo es hoja que lo elimine directamente
+                    dispose(ArbUsuarios);
+                    ArbUsuarios := nil;
+                end else begin
+                    if (ArbUsuarios^.ant = nil) then begin //si no tiene usuarios menores que apunte directamente al siguiente
+                        eliminar := ArbUsuarios;
+                        ArbUsuarios := ArbUsuarios^.sig;
+                        dispose(eliminar);
+                        eliminar := nil;
+                    end else begin
+                        if (ArbUsuarios^.sig = nil) then begin //si no tiene usuarios mayores que apunte directamente al anterior
+                            eliminar := ArbUsuarios;
+                            ArbUsuarios := ArbUsuarios^.ant;
+                            dispose(eliminar);
+                            eliminar := nil;
+                        end;
+                    end;
+                end;
+            end;
+        end;
+        if (encontro = false) then begin
+            eliminarDelArbol(ArbUsuarios^.sig,nombre,listaConvers);
+            eliminarDelArbol(ArbUsuarios^.ant,nombre,listaConvers);
+        end;
+    end;
+end;
+
+
+procedure borrarUsuario(var listaConvers : puntConv; ArbUsuarios : puntArb; nombre : string);
+begin
+    if (listaConvers <> nil) then begin
+        if ( (listaConvers^.usuario1^.nombre = nombre) or (listaConvers^.usuario2^.nombre = nombre) ) then begin
+            borrarMensajes(listaConvers^.mensaje);
+            eliminarNodoLista(listaConvers);
+            borrarUsuario(listaConvers, ArbUsuarios,nombre);
+        end else begin
+            borrarUsuario(listaConvers^.sig, ArbUsuarios,nombre);
+        end;
+    end;
+end;
+
+function cantConversaciones(ListaConversaciones:puntConv; nombre:string): integer;
+var cursor:puntconv;
+    cc:integer;
+begin
+    cc:=0;
+    cursor:=listaConversaciones;
+    while (cursor<>nil) do begin
+        if ((cursor^.usuario1^.nombre=nombre) or (cursor^.usuario2^.nombre=nombre)) then
+            cc:=cc+1;
+        cursor:=cursor^.sig
+    end;
+    cantConversaciones:=cc;
+end;   
+    
+procedure segundoMenu(nombre:string; var ListConvers:puntConv; var arbol:puntArb);    
+var salida:boolean; 
+    option:integer;
+    cantidad_conversaciones, cantidad_mensajesNL : integer;
+begin    
+    salida:=false;
+    while (salida=false) do begin    
+        clrscr();
+        write('¡Bienvenido ');
+        write(nombre);
+        writeln('!');
+        writeln();
+        cantidad_mensajesNL := noleidos(listConvers, nombre);
+        if (cantidad_mensajesNL <> 0) then begin
+            write('Tienes ');
+            write(cantidad_mensajesNL);
+            writeln(' mensajes por leer');
+        end else begin
+            writeln('No tienes ningun mensaje');
+        end;
+        writeln();
+        cantidad_conversaciones := cantConversaciones(ListConvers, nombre);
+        if (cantidad_conversaciones <> 0) then begin
+            write('Cantidad de conversaciones: ');
+            writeln(cantidad_conversaciones);
+        end else begin
+            writeln('No tienes ninguna conversacion');
+        end;
+        writeln();
+        writeln('1: Listar conversaciones activas');
+        writeln();
+        writeln('2: Listar todas las conversaciones');
+        writeln();
+        writeln('3: Ver ultimos mensajes');
+        writeln();
+        writeln('4: Ver conversacion');
+        writeln();
+        writeln('5: Contestar mensaje');
+        writeln();
+        writeln('6: Nueva conversacion');
+        writeln();
+        writeln('7: Borrar usuario');
+        writeln();
+        writeln('8: Logout');
+        writeln();
+        write('Elija una opcion: ');
+        readln(option);
+        case option of
+            1:listarCA(ListConvers, nombre);
+            2:listarCT(ListConvers, nombre);
+            3:verultmjs(ListConvers, nombre);
+            4:verconversacion(ListConvers, nombre);
+            5:contestarMensaje(ListConvers,nombre,arbol);
+            6:nuevaconversacion(ListConvers,nombre,arbol);
+            7:begin borrarUsuario(ListConvers, arbol, nombre);
+                eliminarDelArbol(arbol,nombre,ListConvers);
+                salida:=true;
+            end;
+            8: begin salida:=true;
+            end;        
+        end;
+    end;
+end;   
+     
+procedure login(var archivoUsuarios:archUsuarios;var archivoConvers:archConvers;var archivoMensajes:archMensajes; var ListConvers : puntConv; var arbolUsuarios : puntArb);
+var auxnombre, auxpassword:string[8];
+begin
+    clrscr();
+    writeln('Login');
+    writeln();
+    write('Ingrese su nombre de usuario: ');
+    readln(auxnombre);
+    if (auxnombre <> '') then begin
+        writeln();
+        write('bien, ');
+        write(auxnombre);
+        write(', ahora ingrese su contraseña: ');
+        readln(auxpassword);
+        if (auxpassword <> '') then begin
+            if (validarUsuCont(auxnombre, auxpassword,arbolUsuarios)=true) then
+                segundoMenu(auxnombre, ListConvers, arbolUsuarios)
+            else begin
+                clrscr();
+                write('datos incorrectos.');
+                readln();
+            end;
+        end else begin
+            clrscr();
+            writeln('Contraseña incorrecta');
+            readln();
+        end;
+    end else begin
+        clrscr();
+        writeln('Usuario incorrecto');
+        readln();
+    end;
+end;
+
+procedure cargaEstructura(var archivoMensajes : archMensajes; var archivoConversaciones : archConvers; var archivoUsuarios : archUsuarios; var arbolUsuarios : puntArb; var ListConvers : puntConv; var Lista_HC : puntHiper);
+begin
+    abrirArchivos(archivoMensajes, archivoConversaciones, archivoUsuarios);
+    cargaArbol(archivoUsuarios,arbolUsuarios);
+    crearListaConversaciones(ListConvers, arbolUsuarios, archivoConversaciones, archivoMensajes);
+    usuariosHC(ListConvers,lista_HC);
+end;
+
+//Programa Principal
+var salida:boolean;
+    arbolUsuarios:puntArb;
+    ListConvers:puntConv;
+    archivoUsuarios:archUsuarios;
+    archivoMensajes:archMensajes;
+    archivoConversaciones :archConvers; 
+    lista_HC:puntHiper;
+    option:integer;
+begin
+    cargaEstructura(archivoMensajes, archivoConversaciones, archivoUsuarios, arbolUsuarios, ListConvers, Lista_HC);
+    {
+    rewrite(archivoMensajes);
+    rewrite(archivoConversaciones);
+    rewrite(archivoUsuarios);
+    
+    close(archivoMensajes);
+    close(archivoConversaciones);
+    close(archivoUsuarios);
+    }
+    
+    salida:=false;
+    while (salida=false) do begin 
+        clrscr();
+        writeln('Mensajeria Personal');
+        writeln();
+        writeln('1: Login');
+        writeln();
+        writeln('2: Nuevo usuario');
+        writeln();
+        writeln('3: Ver usuarios hiperconectados');
+        writeln();
+        writeln('4: Salir');
+        writeln();
+        write('Elija una opcion: ');
+        readln(option);
+        case option of
+            1: login(archivoUsuarios, archivoConversaciones, archivoMensajes,ListConvers,arbolUsuarios);
+            2: nuevoUsuario(arbolUsuarios);
+            3: begin clrscr();
+                mostrarListaHC(lista_HC);
+                readln();
+            end;
+            4: begin salir(archivoMensajes, archivoConversaciones, archivoUsuarios, arbolUsuarios,ListConvers);
+                     salida:=true;
+                     clrscr();
+                     writeln('Saliste.');
+            end;
+        end;
+    end;
+end.

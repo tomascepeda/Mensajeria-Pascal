@@ -1,0 +1,448 @@
+program prueba;
+
+uses crt;
+
+type puntArb=^arbUsuarios;
+    arbUsuarios=record
+    nombre:string[8];
+    pass:string[8];
+    sig, ant:puntArb;
+end;
+
+    conversacionesArchivo = record
+    codigo : integer;
+    usuario1,usuario2 : string;
+    end;
+
+type puntConv=^listaConvers;
+    puntMens=^listaMensajes;
+    listaConvers=record
+    codigo:integer;
+    usuario1, usuario2:puntArb;
+    mensaje:puntMens;
+    sig:puntConv;
+end;
+
+    
+    listaMensajes=record
+    fecha:string;
+    texto:string;
+    usuario1:puntArb;
+    leido:boolean;
+    sig : puntMens;
+end;
+
+
+    mensajes=record
+    codigo : integer;
+    fecha:string;
+    texto:string;
+    usuario1:string;
+    leido:boolean;
+end;
+
+type puntHiper=^hiperConectados;
+    hiperConectados=record
+    nombre:string;
+    cantConv:integer;
+    sig:puntHiper;
+end;
+
+type archUsuarios=file of arbUsuarios;
+     archConvers = file of conversacionesArchivo;
+     archMensajes = file of mensajes;
+     lisMensajes = file of listaConvers;
+     
+   
+   
+  
+
+//une los punteros de los usuarios de la lista conversaciones con el arbol
+procedure unirArbol(ArbUsuarios : puntArb; var reg_conversaciones : listaConvers; aux_archivo : conversacionesArchivo);
+begin
+    if ( (reg_conversaciones.usuario1 = nil) or (reg_conversaciones.usuario2 = nil) ) then begin
+        if (ArbUsuarios <> nil) then begin
+            if (ArbUsuarios^.nombre = aux_archivo.usuario1) then
+                reg_conversaciones.usuario1 := ArbUsuarios;
+                
+            if (ArbUsuarios^.nombre = aux_archivo.usuario2) then
+                reg_conversaciones.usuario2 := ArbUsuarios;
+            
+            unirArbol(ArbUsuarios^.ant,reg_conversaciones,aux_archivo);
+            unirArbol(ArbUsuarios^.sig,reg_conversaciones,aux_archivo);
+        end;
+    end;
+end;
+
+//une el puntero del usuario que escribio el mensaje al arbol
+procedure unirAlArbol(ArbUsuarios : puntArb; nombre : string; var mensaje : listaMensajes);
+begin
+    if (mensaje.usuario1 = nil) then begin
+        if (ArbUsuarios <> nil) then begin
+            if (ArbUsuarios^.nombre = nombre) then begin
+                mensaje.usuario1 := ArbUsuarios;
+            end;
+            unirAlArbol(ArbUsuarios^.ant,nombre,mensaje);
+            unirAlArbol(ArbUsuarios^.sig,nombre,mensaje);
+        end;
+    end;
+end;
+
+
+//agrega un mensaje a la lista manteniendo el orden
+procedure agregarAListaMensajes(var lista_mensajes : puntMens; registro : mensajes; ArbUsuarios : puntArb);
+var cursor : puntMens;
+begin
+    if (lista_mensajes <> nil) then begin
+        if (lista_mensajes^.fecha > registro.fecha) then begin
+            agregarAListaMensajes(lista_mensajes^.sig, registro, ArbUsuarios);
+        end else begin
+            new(cursor);
+            cursor^.fecha := registro.fecha;
+            cursor^.texto := registro.texto;
+            cursor^.leido := registro.leido;
+            
+            unirAlArbol(ArbUsuarios, registro.usuario1, cursor^); //une el usuario que escribio el mensaje al arbol
+            
+            cursor^.sig := lista_mensajes;
+            lista_mensajes := cursor;
+        end;
+    end else begin
+        new(lista_mensajes);
+        lista_mensajes^.fecha := registro.fecha;
+        lista_mensajes^.texto := registro.texto;
+        lista_mensajes^.leido := registro.leido;
+        
+        unirAlArbol(ArbUsuarios, registro.usuario1, lista_mensajes^);
+        
+        lista_mensajes^.sig := nil;
+    end;
+end;
+
+
+//Genera mensajes de una conversacion
+procedure generarListaMensajes(codigo : integer; var lista_mensajes : puntMens; var ArchMensajes : archMensajes; ArbUsuarios : puntArb);
+var aux_archivo : mensajes;
+begin
+    if (not eof(ArchMensajes)) then begin
+        read(ArchMensajes,aux_archivo);
+        if (aux_archivo.codigo = codigo) then begin 
+            agregarAListaMensajes(lista_mensajes, aux_archivo, ArbUsuarios);
+            generarListaMensajes(codigo,lista_mensajes,ArchMensajes,ArbUsuarios);
+        end else begin
+            generarListaMensajes(codigo,lista_mensajes,ArchMensajes,ArbUsuarios);
+        end;
+    end;
+end;
+
+
+//Crea la lista conversaciones los mensajes
+procedure crearListaConversaciones(var listaConversaciones : puntConv; ArbUsuarios : puntArb; var ArchConversaciones : archConvers; var ArchMensajes : archMensajes);
+var reg_archivo : conversacionesArchivo;
+begin
+    if (not eof(ArchConversaciones)) then begin
+        read(ArchConversaciones,reg_archivo);
+        new(listaConversaciones);
+        listaConversaciones^.codigo := reg_archivo.codigo;
+        listaConversaciones^.usuario1 := nil;
+        listaConversaciones^.usuario2 := nil;
+        listaConversaciones^.mensaje := nil;
+        
+        unirArbol(ArbUsuarios, listaConversaciones^,reg_archivo); //une los usuarios del nodo al arbol
+        
+        seek(ArchMensajes,0);
+        generarListaMensajes(listaConversaciones^.codigo, listaConversaciones^.mensaje, ArchMensajes, ArbUsuarios); //genera los mensajes de la conversacion
+        
+        crearListaConversaciones(listaConversaciones^.sig, ArbUsuarios, ArchConversaciones,ArchMensajes);
+    end;
+end;
+
+
+
+
+
+procedure mostrar(lista : puntMens);
+begin
+    if (lista <> nil) then begin
+        writeln('//////');
+        writeln(lista^.fecha);
+        writeln(lista^.texto);
+        writeln(lista^.usuario1^.nombre);
+        writeln(lista^.leido);
+        mostrar(lista^.sig);
+    end;
+    
+end;
+
+
+procedure borrarMensajes(var lista_mensajes : puntMens);
+begin
+    while (lista_mensajes <> nil) do begin
+        if (lista_mensajes^.sig = nil) then begin
+            dispose(lista_mensajes);
+            lista_mensajes := nil;
+        end else begin
+            borrarMensajes(lista_mensajes^.sig);
+        end;
+    end;
+end;
+procedure eliminarNodoLista(var listaConvers : puntConv);
+var eliminar : puntConv;
+begin
+    if (listaConvers <> nil) then begin
+        eliminar := listaConvers;
+        listaConvers := listaConvers^.sig;
+        dispose(eliminar);
+        eliminar := nil;
+    end;
+    
+    
+end;
+{
+procedure borrarMensajes(var lista_mensajes : puntMens);
+var cursor : puntMens;
+begin
+    cursor := lista_mensajes;
+    if (cursor <> nil) then begin
+        while (cursor^.sig <> nil) do begin
+            cursor := cursor^.sig;
+        end;
+        dispose(cursor);
+        cursor := nil;
+    end;
+end;
+}
+
+
+
+//Busca el el mayor usuario entre los menores, se le pasa como parametro el puntero anterior y un registro vacio
+function buscarMayorArbol(ArbUsuarios : puntArb; registro : arbUsuarios) : arbUsuarios;
+var aux,izquierda,derecha : arbUsuarios;
+begin
+    izquierda.nombre := '';
+    derecha.nombre := '';
+    if (ArbUsuarios <> nil) then begin
+        if (ArbUsuarios^.nombre < registro.nombre) then begin
+            izquierda := buscarMayorArbol(ArbUsuarios^.ant, registro);
+            derecha := buscarMayorArbol(ArbUsuarios^.sig,registro);
+        end else begin
+            aux.nombre := ArbUsuarios^.nombre;
+            aux.pass := ArbUsuarios^.pass;
+            
+            izquierda := buscarMayorArbol(ArbUsuarios^.ant, aux);
+            derecha := buscarMayorArbol(ArbUsuarios^.sig, aux);
+        end;
+        
+        if (izquierda.nombre > derecha.nombre) then
+            buscarMayorArbol := izquierda
+        else
+            buscarMayorArbol := derecha;
+            
+    end else begin
+        buscarMayorArbol := registro;
+    end;
+end;
+
+
+procedure puentearArbol(var ArbUsuarios : puntArb; registro : arbUsuarios);
+var eliminar : puntArb; encontro : boolean;
+begin
+    if (ArbUsuarios <> nil) then begin
+        writeln();
+        if ( (ArbUsuarios^.nombre = registro.nombre) and (ArbUsuarios^.pass = registro.pass) ) then begin
+            encontro := true;
+            if (ArbUsuarios^.ant = nil) and (ArbUsuarios^.sig = nil)then begin //si es hoja que lo elimine directamente
+                dispose(ArbUsuarios);
+                ArbUsuarios := nil;
+            end else begin
+                eliminar := ArbUsuarios;
+                ArbUsuarios := ArbUsuarios^.ant;
+                dispose(eliminar);
+                eliminar := nil;
+            end;
+        end;
+        
+        if (encontro = false) then begin
+            puentearArbol(ArbUsuarios^.ant,registro);
+            puentearArbol(ArbUsuarios^.sig,registro);
+        end;
+    end;
+end;
+
+
+
+procedure eliminarDelArbol(var ArbUsuarios : puntArb; nombre : string);
+var mayor,aux : arbUsuarios; encontro : boolean; eliminar : puntArb;
+begin
+    encontro := false;
+    if (ArbUsuarios <> nil) then begin
+        if (nombre = ArbUsuarios^.nombre) then begin
+            //writeln();//////////////
+            encontro := true;
+            //aux.nombre := '';
+            //aux.pass := '';
+            if ( (ArbUsuarios^.ant <> nil) and (ArbUsuarios^.sig <> nil) ) then begin //si el nodo tiene usuarios por izquirda y por derecha que busque el mayor de los menores
+                aux.nombre := '';
+                aux.pass := '';
+                mayor := buscarMayorArbol(ArbUsuarios^.ant,aux);
+                //puentearArbol(ArbUsuarios, mayor);
+                ArbUsuarios^.nombre := mayor.nombre;
+                ArbUsuarios^.pass := mayor.pass;
+            end else begin
+                if ( (ArbUsuarios^.ant = nil) and (ArbUsuarios^.sig = nil) ) then begin //si el nodo es hoja que lo elimine directamente
+                    dispose(ArbUsuarios);
+                    ArbUsuarios := nil;
+                end else begin
+                    if (ArbUsuarios^.ant = nil) then begin //si no tiene usuarios menores que apunte directamente al siguiente
+                        eliminar := ArbUsuarios;
+                        ArbUsuarios := ArbUsuarios^.sig;
+                        dispose(eliminar);
+                        eliminar := nil;
+                    end else begin
+                        if (ArbUsuarios^.sig = nil) then begin //si no tiene usuarios mayores que apunte directamente al anterior
+                            eliminar := ArbUsuarios;
+                            ArbUsuarios := ArbUsuarios^.ant;
+                            dispose(eliminar);
+                            eliminar := nil;
+                        end;
+                    end;
+                end;
+            end;
+        end;
+        
+        if (encontro = false) then begin
+            eliminarDelArbol(ArbUsuarios^.sig,nombre);
+            eliminarDelArbol(ArbUsuarios^.ant,nombre);
+        end;
+    end;
+end;
+
+
+
+procedure mostrarcon(lista : puntConv);
+begin
+    if (lista <> nil) then begin
+        writeln('//////');
+        writeln(lista^.codigo);
+        writeln(lista^.usuario1^.nombre);
+        writeln(lista^.usuario2^.nombre);
+        mostrarcon(lista^.sig);
+    end;
+end;
+
+{
+
+procedure borrarUsuario(var listaConvers : puntConv; ArbUsuarios : puntArb; nombre : string);
+var cursor : puntConv;
+begin
+    cursor := listaConvers;
+    
+    while (cursor <> nil) do begin
+        if ( (cursor^.usuario1^.nombre = nombre) or (cursor^.usuario2^.nombre = nombre) ) then
+            borrarMensajes(cursor^.mensaje);
+        cursor := cursor^.sig;
+    end;
+    
+    cursor := listaConvers;
+    
+    while (cursor <> nil) do begin
+        if ( (cursor^.usuario1^.nombre = nombre) or (cursor^.usuario2^.nombre = nombre) ) then
+            eliminarNodoLista(cursor);
+            cursor := cursor^.sig;    
+    end;
+    
+    //eliminarDelArbol(ArbUsuarios, nombre);
+end;
+    }
+    
+    
+    
+    
+
+procedure borrarUsuario(var listaConvers : puntConv; ArbUsuarios : puntArb; nombre : string);
+begin
+    if (listaConvers <> nil) then begin
+        if ( (listaConvers^.usuario1^.nombre = nombre) or (listaConvers^.usuario2^.nombre = nombre) ) then begin
+            borrarMensajes(listaConvers^.mensaje);
+            eliminarNodoLista(listaConvers);
+            borrarUsuario(listaConvers, ArbUsuarios,nombre);
+        end else begin
+            borrarUsuario(listaConvers^.sig, ArbUsuarios,nombre);
+        end;
+        
+    end else begin
+        //eliminarDelArbol(ArbUsuarios, nombre);
+    end;
+end;
+    
+      
+{
+procedure borrarUsuario(var listaConvers : puntConv; ArbUsuarios : puntArb; nombre : string);
+begin
+    if (listaConvers <> nil) then begin
+        if ( (listaConvers^.usuario1^.nombre = nombre) or (listaConvers^.usuario2^.nombre = nombre) ) then begin
+            borrarMensajes(listaConvers^.mensaje);
+            eliminarNodoLista(listaConvers);
+            borrarUsuario(listaConvers, ArbUsuarios,nombre);
+        end else begin
+            borrarUsuario(listaConvers^.sig, ArbUsuarios,nombre);
+        end;
+        
+    end else begin
+        eliminarDelArbol(ArbUsuarios, nombre);
+    end;
+end;
+      
+}
+{mestra el arbol}
+procedure mostrarr(arbol : puntArb);
+   begin
+       if (arbol <> nil) then begin
+           writeln(arbol^.nombre);
+           mostrarr(arbol^.sig);
+           mostrarr(arbol^.ant);
+       end;
+   end;
+
+
+
+
+
+
+var arbol : puntArb; lis,a : puntConv; aux:conversacionesArchivo;
+ArchivoUsuarios : archUsuarios; ArchivoMensajes : archMensajes; ArchivoConversaciones : archConvers;
+men : mensajes;
+con : conversacionesArchivo;
+x,y : puntConv;
+begin
+    new(arbol);
+    new(arbol^.sig);
+    new(arbol^.ant);
+    new(arbol^.sig^.ant);
+    new(arbol^.ant^.ant);
+    new(arbol^.ant^.sig);
+    
+    
+    arbol^.nombre := 'karen';
+    arbol^.pass := 'kar';
+    arbol^.sig^.nombre := 'ramiro';
+    arbol^.sig^.pass := 'ram';
+    arbol^.ant^.nombre := 'fernando';
+    arbol^.ant^.pass := 'fer';
+    arbol^.sig^.ant^.nombre := 'oscar';
+    arbol^.sig^.ant^.pass :=  'os';
+    arbol^.ant^.ant^.nombre := 'adriana';
+    arbol^.ant^.ant^.pass := 'adr';
+    arbol^.ant^.sig^.nombre := 'jorge';
+    arbol^.ant^.sig^.pass := 'jor';
+    
+  
+    eliminarDelArbol(arbol, 'adriana');
+ mostrarr(arbol);
+
+    readln();
+    clrscr();
+   
+    
+    
+end.
